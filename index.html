@@ -14,14 +14,19 @@
     font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
   }
 
-  #canvas{
+  #canvas-wrap{
+    position:relative;
     width:100%;
     max-width:480px;
     margin:0 auto;
+    overflow:hidden;
+  }
+  #canvas{
+    width:480px;
     position:relative;
     background:var(--stripe-blue);
-    overflow:hidden;
     min-height:5200px;
+    transform-origin:top left;
   }
 
   .item{ position:absolute; }
@@ -79,6 +84,7 @@
 </head>
 <body>
 
+<div id="canvas-wrap">
 <div id="canvas">
 
   <!-- ===================== BACKGROUNDS ===================== -->
@@ -156,8 +162,24 @@
   </div>
 
 </div>
+</div>
 
 <script>
+/* ---------- масштабирование холста под ширину экрана ---------- */
+const canvasWrap = document.getElementById('canvas-wrap');
+const canvasEl0 = document.getElementById('canvas');
+let siteScale = 1;
+function applyScale(){
+  const w = canvasWrap.clientWidth;
+  siteScale = Math.min(1, w / 480);
+  canvasEl0.style.transform = `scale(${siteScale})`;
+  canvasWrap.style.height = (canvasEl0.scrollHeight * siteScale) + 'px';
+}
+window.addEventListener('resize', applyScale);
+window.addEventListener('orientationchange', applyScale);
+window.addEventListener('load', applyScale);
+applyScale();
+
 /* ---------- reveal on scroll ---------- */
 const revealEls = document.querySelectorAll('.fade-up, .pop, .zoom-forward');
 const revealObserver = new IntersectionObserver((entries)=>{
@@ -190,50 +212,62 @@ bdayVideo.addEventListener('ended', ()=>{
 (function(){
   const kodakEl = document.getElementById('kodak');
   const stripEl = document.getElementById('strip');
-  const canvasEl = document.getElementById('canvas');
-  if(!kodakEl || !stripEl || !canvasEl) return;
+  const canvasElInner = document.getElementById('canvas');
+  const wrapEl = document.getElementById('canvas-wrap');
+  if(!kodakEl || !stripEl || !canvasElInner || !wrapEl) return;
   if(window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
-  let restTop, restLeft;
-  function readRest(){
-    restTop = parseFloat(kodakEl.style.top)||0;
-    restLeft = parseFloat(kodakEl.style.left)||0;
-  }
-  readRest();
+  const restTopStyle = parseFloat(kodakEl.style.top)||0;
+  const restLeftStyle = parseFloat(kodakEl.style.left)||0;
+  const restWidthStyle = kodakEl.style.width; // например "278.666px"
+  let restTopDoc = null; // текущая "точка покоя" катушки в реальных пикселях документа
 
   let pinTicking = false;
   function updatePin(){
     pinTicking = false;
+    const scrollY = window.scrollY || window.pageYOffset;
     const vh = window.innerHeight;
-    const kodakH = kodakEl.offsetHeight || 200;
+
+    if(kodakEl.style.position !== 'fixed'){
+      /* катушка сейчас в обычном потоке холста — читаем её реальное
+         (уже отмасштабированное) положение на странице */
+      const r = kodakEl.getBoundingClientRect();
+      restTopDoc = r.top + scrollY;
+    }
+    if(restTopDoc===null) return;
+
+    const kodakH = kodakEl.offsetHeight * siteScale || 200;
     const pinAt = Math.min(vh - kodakH - 30, vh*0.6);
 
-    const stripTop = stripEl.offsetTop;
-    const stripHeight = stripEl.offsetHeight;
+    const stripRect = stripEl.getBoundingClientRect();
+    const stripTopDoc = stripRect.top + scrollY;
 
     /* прилипание длится от входа плёнки в линию катушки до момента,
        когда катушка сама естественно дошла бы до этой же линии —
-       так раскрытие плёнки и открепление катушки всегда совпадают,
-       без рывков и "дыр", даже если их положение немного не совпадает */
-    const pinStart = stripTop - pinAt;
-    const pinEnd = restTop - pinAt;
+       так раскрытие плёнки и открепление катушки всегда совпадают */
+    const pinStart = stripTopDoc - pinAt;
+    const pinEnd = restTopDoc - pinAt;
     const duration = Math.max(1, pinEnd - pinStart);
-    const scrollY = window.scrollY || window.pageYOffset;
 
     const progress = Math.max(0, Math.min(1, (scrollY - pinStart) / duration));
-    const clipBottom = Math.round(stripHeight * (1 - progress));
-    stripEl.style.clipPath = `inset(0px 0px ${clipBottom}px 0px)`;
+    /* клип — в локальных (немасштабированных) единицах самого элемента */
+    const clipBottomLocal = Math.round(stripEl.offsetHeight * (1 - progress));
+    stripEl.style.clipPath = `inset(0px 0px ${clipBottomLocal}px 0px)`;
 
     if(scrollY > pinStart && scrollY < pinEnd){
-      const canvasLeft = canvasEl.getBoundingClientRect().left;
+      if(kodakEl.parentElement !== document.body) document.body.appendChild(kodakEl);
+      const wrapRect = wrapEl.getBoundingClientRect();
       kodakEl.style.position = 'fixed';
       kodakEl.style.top = pinAt + 'px';
-      kodakEl.style.left = (canvasLeft + restLeft) + 'px';
+      kodakEl.style.left = (wrapRect.left + restLeftStyle*siteScale) + 'px';
+      kodakEl.style.width = (parseFloat(restWidthStyle)*siteScale) + 'px';
       kodakEl.style.zIndex = 50;
     } else {
+      if(kodakEl.parentElement !== canvasElInner) canvasElInner.appendChild(kodakEl);
       kodakEl.style.position = 'absolute';
-      kodakEl.style.top = restTop + 'px';
-      kodakEl.style.left = restLeft + 'px';
+      kodakEl.style.top = restTopStyle + 'px';
+      kodakEl.style.left = restLeftStyle + 'px';
+      kodakEl.style.width = restWidthStyle;
       kodakEl.style.zIndex = 6;
     }
   }
